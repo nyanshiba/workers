@@ -1,0 +1,8 @@
+{
+  "name": "satident",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-13",
+  "vpc_networks": [
+    { "binding": "MESH", "network_id": "cf1:network", "remote": true }
+  ]
+}
