@@ -1,35 +1,56 @@
-const PRIVATE_BASE = "http://10.64.10.40:49374";
-const CACHE_SALT = "v5"; // 反映させたいときに increment = 即 purge
-
 import { filterEventStream, isKept } from "./lib/sse.js";
 import { canCache, cacheKey } from "./lib/cache.js";
+import { applyHistoryFilter, HISTORY_PATH } from "./lib/history.js";
 
-const toOrigin = (u) => new URL(u.pathname + u.search, PRIVATE_BASE);
+// 認証が env で与えられた場合のみ Basic ヘッダを付与(未設定なら素通し)。
+function authHeader(env) {
+  const username = env.OPCODE_AUTH_USERNAME;
+  const password = env.OPCODE_AUTH_PASSWORD;
+  if (!username || !password) return undefined;
+  return "Basic " + btoa(`${username}:${password}`);
+}
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const base = env.PRIVATE_BASE;
+    const target = new URL(url.pathname + url.search, base);
 
-    // 1. SSE: reasoning を落として中継(キャッシュしない)
+    const headers = new Headers(request.headers);
+    const auth = authHeader(env);
+    if (auth) headers.set("authorization", auth);
+
+    const init = { method: request.method, headers };
+    if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
+      init.body = request.body;
+    }
+
+    // 1. SSE: reasoning / tool.input.delta を落として中継(キャッシュしない)
     if (url.pathname === "/event" || url.pathname.endsWith("/event")) {
-      const origin = await env.MESH.fetch(toOrigin(url), request);
-      const headers = new Headers(origin.headers);
-      headers.delete("content-length"); // フィルタで長さが変わる
+      const origin = await env.MESH.fetch(target, init);
+      const headersOut = new Headers(origin.headers);
+      headersOut.delete("content-length"); // フィルタで長さが変わる
       return new Response(
         origin.body?.pipeThrough(filterEventStream(isKept)) ?? null,
-        { status: origin.status, headers },
+        { status: origin.status, headers: headersOut },
       );
     }
 
-    // 2. 非 GET は透過
-    if (request.method !== "GET") return env.MESH.fetch(toOrigin(url), request);
+    // 2. 履歴: assistant の reasoning パートを落として JSON を返す
+    if (HISTORY_PATH.test(url.pathname)) {
+      const origin = await env.MESH.fetch(target, init);
+      return applyHistoryFilter(origin);
+    }
 
-    // 3. GET は正の max-age がある応答だけキャッシュ
-    const key = cacheKey(url, CACHE_SALT);
+    // 3. 非 GET は透過
+    if (request.method !== "GET") return env.MESH.fetch(target, init);
+
+    // 4. GET は正の max-age がある応答だけキャッシュ
+    const key = cacheKey(url, env.CACHE_SALT);
     const cached = await caches.default.match(key);
     if (cached) return cached;
 
-    const origin = await env.MESH.fetch(toOrigin(url), request);
+    const origin = await env.MESH.fetch(target, init);
     if (canCache(origin)) {
       ctx.waitUntil(caches.default.put(key, origin.clone()).catch(() => {}));
     }

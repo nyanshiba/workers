@@ -1,8 +1,25 @@
 {
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "opencode",
   "main": "src/index.js",
-  "compatibility_date": "2026-08-13",
+  "compatibility_date": "2026-08-18",
+
+  // 秘匿でない vars(コードから env.PRIVATE_BASE / env.CACHE_SALT で参照)
+  "vars": {
+    "PRIVATE_BASE": "http://10.64.10.40:49374",
+    "CACHE_SALT": "v7"
+  },
+
+  // 認証情報はここに書かない。deploy 前に外部 JSON で一括設定:
+  //   bunx wrangler secret bulk secrets.json
+  //  ※ secrets.json はリポジトリにコミットしない(.gitignore 済み)
+
+  // Workers VPC: Cloudflare Mesh 全ネットワークへ
   "vpc_networks": [
-    { "binding": "MESH", "network_id": "cf1:network", "remote": true }
+    {
+      "binding": "MESH",
+      "network_id": "cf1:network",
+      "remote": true
+    }
   ]
 }

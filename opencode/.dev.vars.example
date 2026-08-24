@@ -1,0 +1,7 @@
+# ローカル開発用の env サンプル。コピーして実値を書く:
+#   cp .dev.vars.example .dev.vars
+# .dev.vars はデプロイされない(gitignore 済み)。
+PRIVATE_BASE=http://10.0.10.40:49374
+CACHE_SALT=v1
+OPCODE_AUTH_USERNAME=opencode
+OPCODE_AUTH_PASSWORD=opencode
