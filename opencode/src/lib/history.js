@@ -24,18 +24,24 @@ export function stripReasoningFromJson(text) {
 
 const HISTORY_PATH = /^\/api\/session\/[^/]+\/message(\/[^/]+)?$/;
 
-export function applyHistoryFilter(originResponse) {
+// headerRewriter: (originResponse) => Headers。ブラウザ向けヘッダの上書き(no-cache 等)。
+export async function applyHistoryFilter(originResponse, headerRewriter) {
   if (!originResponse.ok) return originResponse;
   const ct = originResponse.headers.get("content-type") || "";
   if (!ct.includes("application/json")) return originResponse;
 
-  return originResponse.text().then((text) => {
-    const filtered = stripReasoningFromJson(text);
-    if (filtered === null) return originResponse;
-    const headers = new Headers(originResponse.headers);
-    headers.delete("content-length");
-    return new Response(filtered, { status: originResponse.status, headers });
-  });
+  // ボディを text() で消費した後の元 Response は再読不可(ストリーム確定済み)。
+  // これをそのまま返すと、クライアント(@opencode-ai/client)が空ボディを
+  // 不正な Content-Type として扱い ClientError: UnsupportedContentType になる。
+  // よって strip の有無にかかわらず、必ず新しい Response を作り直して返す。
+  const text = await originResponse.text();
+  const filtered = stripReasoningFromJson(text);
+  const headers =
+    headerRewriter !== undefined
+      ? headerRewriter(originResponse)
+      : new Headers(originResponse.headers);
+  headers.delete("content-length");
+  return new Response(filtered ?? text, { status: originResponse.status, headers });
 }
 
 export { HISTORY_PATH };
