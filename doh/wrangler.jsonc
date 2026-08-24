@@ -1,0 +1,16 @@
+{
+  "name": "doh",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-13",
+  "vpc_networks": [
+    { "binding": "MESH", "network_id": "cf1:network", "remote": true }
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "doh.nyanshiba.com",
+      "custom_domain": true
+    }
+  ]
+}
