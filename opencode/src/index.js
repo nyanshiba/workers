@@ -1,6 +1,7 @@
 import { filterEventStream, isKept } from "./lib/sse.js";
 import { canCache, cacheKey } from "./lib/cache.js";
 import { applyHistoryFilter, HISTORY_PATH } from "./lib/history.js";
+import { applyUiTweaks } from "./lib/ui.js";
 
 // 認証が env で与えられた場合のみ Basic ヘッダを付与(未設定なら素通し)。
 function authHeader(env) {
@@ -50,10 +51,11 @@ export default {
     const cached = await caches.default.match(key);
     if (cached) return cached;
 
-    const origin = await env.MESH.fetch(target, init);
-    if (canCache(origin)) {
-      ctx.waitUntil(caches.default.put(key, origin.clone()).catch(() => {}));
+    // text/html には Web UI 用 CSS パッチを注入(メッセージヘッダーの常時表示)
+    const response = await applyUiTweaks(await env.MESH.fetch(target, init));
+    if (canCache(response)) {
+      ctx.waitUntil(caches.default.put(key, response.clone()).catch(() => {}));
     }
-    return origin;
+    return response;
   },
 };
