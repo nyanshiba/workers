@@ -2,12 +2,15 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "opencode",
   "main": "src/index.js",
-  "compatibility_date": "2026-08-18",
+  "compatibility_date": "2026-08-26",
 
-  // 秘匿でない vars(コードから env.PRIVATE_BASE / env.CACHE_SALT で参照)
+  // Workers Caching(エントリポイントキャッシュ)を有効化。Wrangler 4.69+ 必要。
+  // キャッシュ可否は Worker が返す Cache-Control で決まる(lib/cache.js)。
+  "cache": { "enabled": true },
+
+  // 秘匿でない vars(コードから env.PRIVATE_BASE で参照)
   "vars": {
-    "PRIVATE_BASE": "http://10.64.10.40:49374",
-    "CACHE_SALT": "v7"
+    "PRIVATE_BASE": "http://10.64.10.40:49374"
   },
 
   // 認証情報はここに書かない。deploy 前に外部 JSON で一括設定:

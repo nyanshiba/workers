@@ -1,7 +1,7 @@
 import { filterEventStream, isKept } from "./lib/sse.js";
-import { canCache, cacheKey } from "./lib/cache.js";
 import { applyHistoryFilter, HISTORY_PATH } from "./lib/history.js";
 import { applyUiTweaks } from "./lib/ui.js";
+import { cacheHeaders } from "./lib/cache.js";
 
 // 認証が env で与えられた場合のみ Basic ヘッダを付与(未設定なら素通し)。
 function authHeader(env) {
@@ -11,11 +11,17 @@ function authHeader(env) {
   return "Basic " + btoa(`${username}:${password}`);
 }
 
+// ヘッダを差し替えた新しい Response を作る(ボディは引き継ぐ)。
+// Workers Caching は Worker が返す Cache-Control でキャッシュ可否を決めるため、
+// 中継する応答には必ずキャッシュ方針ヘッダを付けてから返す。
+function repackage(response, headers) {
+  return new Response(response.body, { status: response.status, headers });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const base = env.PRIVATE_BASE;
-    const target = new URL(url.pathname + url.search, base);
+    const target = new URL(url.pathname + url.search, env.PRIVATE_BASE);
 
     const headers = new Headers(request.headers);
     const auth = authHeader(env);
@@ -26,36 +32,46 @@ export default {
       init.body = request.body;
     }
 
-    // 1. SSE: reasoning / tool.input.delta を落として中継(キャッシュしない)
-    if (url.pathname === "/event" || url.pathname.endsWith("/event")) {
+    // 1. SSE: reasoning / tool.input.delta を落として中継(動的 -> no-store)
+    //    /event は SPA HTML なので /api/event のみ対象にする。
+    if (url.pathname === "/api/event") {
       const origin = await env.MESH.fetch(target, init);
-      const headersOut = new Headers(origin.headers);
-      headersOut.delete("content-length"); // フィルタで長さが変わる
+      const out = cacheHeaders(origin.headers, url.pathname, origin.status);
+      out.delete("content-length"); // フィルタで長さが変わる
       return new Response(
         origin.body?.pipeThrough(filterEventStream(isKept)) ?? null,
-        { status: origin.status, headers: headersOut },
+        { status: origin.status, headers: out },
       );
     }
 
-    // 2. 履歴: assistant の reasoning パートを落として JSON を返す
+    // 2. 履歴: assistant の reasoning パートを落として JSON を返す(動的 -> no-store)
     if (HISTORY_PATH.test(url.pathname)) {
       const origin = await env.MESH.fetch(target, init);
-      return applyHistoryFilter(origin);
+      const filtered = await applyHistoryFilter(origin);
+      const out = cacheHeaders(filtered.headers, url.pathname, filtered.status);
+      out.delete("content-length");
+      return repackage(filtered, out);
     }
 
-    // 3. 非 GET は透過
+    // 3. HEAD: GET とキャッシュキーを共有するため、本文なし応答の混入を防ぐ目的で no-store
+    if (request.method === "HEAD") {
+      const origin = await env.MESH.fetch(target, init);
+      const out = new Headers(origin.headers);
+      out.set("cache-control", "no-store");
+      return repackage(origin, out);
+    }
+
+    // 4. 非 GET は透過(Workers Caching は GET/HEAD のみ対象)
     if (request.method !== "GET") return env.MESH.fetch(target, init);
 
-    // 4. GET は正の max-age がある応答だけキャッシュ
-    const key = cacheKey(url, env.CACHE_SALT);
-    const cached = await caches.default.match(key);
-    if (cached) return cached;
-
-    // text/html には Web UI 用 CSS パッチを注入(メッセージヘッダーの常時表示)
-    const response = await applyUiTweaks(await env.MESH.fetch(target, init));
-    if (canCache(response)) {
-      ctx.waitUntil(caches.default.put(key, response.clone()).catch(() => {}));
-    }
-    return response;
+    // 5. GET: 静的 UI(HTML シェル・/assets)だけ Workers Caching に載せる。
+    //    シェルは CSS パッチ注入後の応答に public,max-age を宣言、動的 API は
+    //    no-store にしてヒューリスティックキャッシュ(200->2h)を防ぐ。
+    const origin = await env.MESH.fetch(target, init);
+    const response = await applyUiTweaks(origin); // text/html のみ CSS パッチ
+    return repackage(
+      response,
+      cacheHeaders(response.headers, url.pathname, response.status),
+    );
   },
 };

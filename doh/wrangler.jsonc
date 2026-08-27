@@ -1,7 +1,13 @@
 {
   "name": "doh",
   "main": "src/index.js",
-  "compatibility_date": "2026-08-13",
+  "compatibility_date": "2026-08-26",
+  "vars": {
+    "PRIVATE_BASE": "https://dot.nyanshiba.com:443"
+  },
+  "cache": {
+    "enabled": true
+  },
   "vpc_networks": [
     { "binding": "MESH", "network_id": "cf1:network", "remote": true }
   ],

@@ -1,26 +1,29 @@
-const PRIVATE_BASE = "http://10.64.7.8:8476";
 const CACHE_TTL_SECONDS = 604800;
-const CACHE_SALT = "v4"; // 反映させたいときに increment = 即 purge
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
+    const PRIVATE_BASE = env.PRIVATE_BASE; // wrangler.jsonc の vars から注入
     const url = new URL(request.url);
-    const cacheKey = new Request(`${url}?__v=${CACHE_SALT}`, { method: "GET" });
-
-    const cached = await caches.default.match(cacheKey);
-    if (cached) return cached;
-
     const origin = await env.MESH.fetch(
       new URL(url.pathname + url.search, PRIVATE_BASE),
       request,
     );
-    if (origin.status !== 200) return new Response(origin.body, origin);
 
-    const body = await origin.arrayBuffer();
+    // GET 200 だけ 7 日間キャッシュする(Workers Cache は Cache-Control 駆動)
+    if (request.method === "GET" && origin.status === 200) {
+      const headers = new Headers(origin.headers);
+      headers.delete("set-cookie"); // BYPASS 防止(静的サイトに応答 Cookie は不要)
+      headers.set(
+        "Cache-Control",
+        `public, max-age=${CACHE_TTL_SECONDS}, stale-if-error=${CACHE_TTL_SECONDS}`,
+      );
+      return new Response(origin.body, { status: origin.status, headers });
+    }
+
+    // 非 GET / 非 200 はキャッシュ対象外にする
+    // (ヒューリスティックキャッシュ 200→2h / 404→3min による誤 HIT を防ぐ)
     const headers = new Headers(origin.headers);
-    headers.set("Cache-Control", `public, max-age=${CACHE_TTL_SECONDS}, stale-if-error=${CACHE_TTL_SECONDS}`);
-    const res = new Response(body, { status: origin.status, headers });
-    ctx.waitUntil(caches.default.put(cacheKey, res.clone()).catch(() => {}));
-    return res;
+    headers.set("Cache-Control", "no-store");
+    return new Response(origin.body, { status: origin.status, headers });
   },
 };

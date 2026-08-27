@@ -1,6 +1,4 @@
 // Protect & connect -> Networking -> Mesh hostname でAレコードを登録
-const PRIVATE_BASE = "https://dot.nyanshiba.com:443";
-const DNS_DEFAULT_TTL_SECONDS = 120; // TTL が読めない場合のフォールバック
 
 // DNS 名をスキップして、その次のフィールド(TYPE)の先頭 offset を返す
 function nameEnd(buf, off) {
@@ -44,29 +42,46 @@ function parseMinTtl(buf) {
 
 export default {
   async fetch(request, env) {
+    const PRIVATE_BASE = env.PRIVATE_BASE; // wrangler.jsonc の vars から注入
     const url = new URL(request.url);
-    if (url.pathname !== "/dns-query") return new Response("Not Found", { status: 404 });
-    if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
-
-    const cacheKey = new Request(url.toString(), { method: "GET" }); // ?dns= 込みクエリがそのままキー
-    const cached = await caches.default.match(cacheKey);
-    if (cached) return cached;
+    if (url.pathname !== "/dns-query") {
+      // 404 応答をヒューリスティックキャッシュ(404→3min)させない
+      return new Response("Not Found", {
+        status: 404,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+    if (request.method !== "GET") {
+      return new Response("Method Not Allowed", {
+        status: 405,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
 
     const upstream = await env.MESH.fetch(
       new URL(url.pathname + url.search, PRIVATE_BASE),
       request,
     );
 
-    if (upstream.status !== 200) return new Response(upstream.body, upstream);
+    if (upstream.status !== 200) {
+      // エラー応答はキャッシュ対象外にする
+      const headers = new Headers(upstream.headers);
+      headers.set("Cache-Control", "no-store");
+      return new Response(upstream.body, { status: upstream.status, headers });
+    }
 
+    // DNS 応答の最小 TTL を s-maxage に反映して Workers Cache に載せる。
+    // ?dns= の base64url クエリごとに別キャッシュエントリになる。
+    // TTL 0 / パース不能の応答はキャッシュしない(TTL 0 = キャッシュ禁止の意図を尊重)
     const body = await upstream.arrayBuffer();
     const headers = new Headers(upstream.headers);
     const ttl = parseMinTtl(new Uint8Array(body));
-    const sMaxAge = ttl && ttl > 0 ? ttl : DNS_DEFAULT_TTL_SECONDS;
-    headers.set("Cache-Control", `public, s-maxage=${sMaxAge}`);
+    if (ttl && ttl > 0) {
+      headers.set("Cache-Control", `public, s-maxage=${ttl}`);
+    } else {
+      headers.set("Cache-Control", "no-store");
+    }
 
-    const toCache = new Response(body, { status: upstream.status, headers });
-    await caches.default.put(cacheKey, toCache.clone());
-    return toCache;
+    return new Response(body, { status: upstream.status, headers });
   },
 };
