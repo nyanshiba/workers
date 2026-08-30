@@ -3,6 +3,10 @@
  *
  * - /__up 以外はメソッド・パス・ボディをそのままオリジン (Dufs) へ中継する。
  *   一覧・ダウンロード・フォルダ ZIP・WebDAV (PROPFIND/MKCOL/MOVE 等) もここで通る。
+ * - 認証は Worker 側で行う。読み取りメソッド (GET/HEAD/OPTIONS/PROPFIND) は
+ *   公開。それ以外 (書き込み) は全パスで Cloudflare Access の署名済み JWT を
+ *   検証して許可する。env.PROTECTED_PATHS で指定したパスは読み取りも含めて
+ *   認証必須 (完全非公開)。
  * - /__up はブラウザ用アップロードページと、Cloudflare のリクエストサイズ上限を
  *   回避するための分割アップロード API。Dufs の PATCH + X-Update-Range: append
  *   を Worker 側から叩いてチャンクを追記していく。
@@ -138,7 +142,10 @@ async function proxy(request, env) {
       // キャッシュ対象: ファイルプロキシに応答 Cookie は不要。Set-Cookie が
       // 残ると Workers Cache が自動 BYPASS して毎回 Worker が走るため除去する。
       hdrs.delete("set-cookie");
-      hdrs.set("cache-control", CACHE_CTL);
+      // 受保護パス (/ や /private/) の GET は認証必須だが、Workers Cache は
+      // 認証状態をキャッシュキーに含めない。キャッシュ HIT で 403 を
+      // すり抜けるのを防ぐため、受保護パスはキャッシュ対象から外す。
+      hdrs.set("cache-control", isProtectedPath(u.pathname, env) ? NO_STORE : CACHE_CTL);
     } else {
       // 404 等はヒューリスティックキャッシュ (既定 TTL) を避けるため no-store
       hdrs.set("cache-control", NO_STORE);
@@ -173,18 +180,111 @@ async function proxy(request, env) {
   return res;
 }
 
-function accessOk(request, env) {
-  if ((env.REQUIRE_ACCESS_JWT || "").toLowerCase() === "true") {
-    return Boolean(request.headers.get("cf-access-jwt-assertion"));
+// ---------------------------------------------------------------------------
+// 認証: Cloudflare Access が発行する RS256 JWT を Worker が自ら検証する。
+// - 取得元: Cf-Access-Jwt-Assertion ヘッダー (Access 注入) / CF_Authorization Cookie
+// - 検証: JWKS (TEAM_DOMAIN/cdn-cgi/access/certs) で署名 + aud (POLICY_AUD) + exp
+// - 公開鍵 (JWKS) はグローバルにキャッシュする (1 時間)
+// ---------------------------------------------------------------------------
+let jwksCache = null;
+const JWKS_TTL_MS = 60 * 60 * 1000;
+
+function cookieValue(request, name) {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
   }
-  return true;
+  return null;
+}
+
+function extractJwt(request) {
+  return (
+    request.headers.get("cf-access-jwt-assertion") ||
+    cookieValue(request, "CF_Authorization")
+  );
+}
+
+/**
+ * 受保護パス判定。
+ * - "/" は完全一致 (ルート直下のみ)。
+ * - それ以外はプレフィックス一致。末尾スラッシュは正規化するため、
+ *   "/private/" と書いても "/private" と書いても同じ扱いになる。
+ *   (例: "/private/" → "/private" と "/private/配下すべて" に一致)
+ */
+function isProtectedPath(pathname, env) {
+  const list = (env.PROTECTED_PATHS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (let p of list) {
+    if (p === "/") {
+      if (pathname === "/") return true;
+    } else {
+      p = p.replace(/\/+$/, ""); // 末尾スラッシュを正規化
+      if (pathname === p || pathname.startsWith(p + "/")) return true;
+    }
+  }
+  return false;
+}
+
+async function fetchJwks(env) {
+  if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS) {
+    return jwksCache.keys;
+  }
+  const domain = env.TEAM_DOMAIN.replace(/\/+$/, "");
+  const r = await fetch(`${domain}/cdn-cgi/access/certs`);
+  if (!r.ok) throw new Error("jwks fetch failed: " + r.status);
+  const body = await r.json();
+  jwksCache = { keys: body.keys || [], fetchedAt: Date.now() };
+  return jwksCache.keys;
+}
+
+function b64urlDecode(s) {
+  return Uint8Array.fromBase64(s, { alphabet: "base64url" });
+}
+
+/**
+ * JWT を検証する。署名 (RS256) → aud → exp の順に確認する。
+ * payload は署名検証に成功した後に信用する。
+ */
+async function verifyJwt(jwt, env) {
+  try {
+    const parts = jwt.split(".");
+    if (parts.length !== 3) return false;
+    const [h, p, s] = parts;
+    const header = JSON.parse(new TextDecoder().decode(b64urlDecode(h)));
+    if (header.alg !== "RS256") return false;
+
+    const keys = await fetchJwks(env);
+    const key = keys.find((k) => k.kid === header.kid);
+    if (!key) return false;
+
+    const pub = await crypto.subtle.importKey(
+      "jwk",
+      key,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    const data = new TextEncoder().encode(h + "." + p);
+    const sig = b64urlDecode(s);
+    const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", pub, sig, data);
+    if (!ok) return false;
+
+    const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(p)));
+    const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (!aud.includes(env.POLICY_AUD)) return false;
+    if (payload.exp && Date.now() / 1000 >= payload.exp) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function handleUpAPI(request, env, url) {
-  if (!accessOk(request, env)) {
-    return json({ error: "access jwt required" }, 401);
-  }
-
   // POST /__up/init
   if (url.pathname === "/__up/init" && request.method === "POST") {
     const p = sanitizePath(url.searchParams);
@@ -284,6 +384,22 @@ export default {
 
     if (!env.MESH || !env.ORIGIN_URL) {
       return json({ error: "MESH binding / ORIGIN_URL var is not configured" }, 500);
+    }
+
+    // 認証判定: 受保護パスは全メソッド、それ以外は書き込みメソッドが対象。
+    // 読み取りメソッド (GET/HEAD/OPTIONS/PROPFIND) の公開パスはここを素通りする。
+    if (isProtectedPath(url.pathname, env) || !READ_METHODS.has(request.method)) {
+      if (!env.TEAM_DOMAIN || !env.POLICY_AUD) {
+        // 認証が必要なのに環境変数が未設定 → フェイルクローズ (500 で明示)
+        return json(
+          { error: "auth env (TEAM_DOMAIN / POLICY_AUD) is not configured" },
+          500
+        );
+      }
+      const jwt = extractJwt(request);
+      if (!jwt || !(await verifyJwt(jwt, env))) {
+        return json({ error: "forbidden" }, 403);
+      }
     }
 
     if (url.pathname === "/__health") {
@@ -394,7 +510,9 @@ function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
 
 async function q(url,opt){
   var r=await fetch(url,opt);
-  // Access のセッションが切れるとログイン HTML が返るので検知する
+  // 認証が必要な書き込みは 403 で返る (JWT 未検証 / 未ログイン)。
+  // Access が介入する場合のログイン HTML / リダイレクトも検知する。
+  if(r.status===403) throw new Error('__ACCESS_EXPIRED__');
   var ct=r.headers.get('content-type')||'';
   if(r.redirected||ct.indexOf('text/html')>=0) throw new Error('__ACCESS_EXPIRED__');
   return r;
@@ -430,7 +548,7 @@ async function uploadOne(file,targetDir,ui){
       set(ui,'送信中 '+offset+'/'+file.size,'',Math.floor(offset/file.size*100));
     }catch(e){
       if(e.message==='__ACCESS_EXPIRED__'){
-        set(ui,'Access のセッションが切れました。ページを再読込してください','err',0);
+        set(ui,'認証が必要です。/private/ でログインしてから再試行してください','err',0);
         throw e;
       }
       if(e.j&&e.j.error==='gap'){offset=e.j.serverOffset;continue;}

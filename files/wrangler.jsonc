@@ -28,11 +28,25 @@
   "vars": {
     // オリジン (Dufs) の宛先。Mesh 経由で到達できるアドレスを指定 (末尾スラッシュなし)。
     // 例: "http://192.168.1.10:5000"
-    "ORIGIN_URL": "http://10.64.12.50:5000",
+    "ORIGIN_URL": "http://REPLACE_WITH_DUFS_HOST:5000",
 
-    // "true" にすると /__up 系 API は Cf-Access-Jwt-Assertion なしで拒否される。
-    // 公開 URL は https://files.example.workers.dev。Access の Self-hosted app
-    // 対象にこのホスト名を入れたあとに "true" へ。
-    "REQUIRE_ACCESS_JWT": "false"
+    // 認証: Cloudflare Access の署名済み JWT (RS256) を Worker が検証する。
+    // 読み取りメソッド (GET/HEAD/OPTIONS/PROPFIND) は公開、書き込みは認証必須。
+    // PROTECTED_PATHS で指定したパスは読み取りも含め認証必須 (完全非公開)。
+
+    // Access のチームドメイン。JWT の署名検証に使う公開鍵 (JWKS) を
+    // <TEAM_DOMAIN>/cdn-cgi/access/certs から取得する。
+    // Cloudflare One ダッシュボード -> Overview -> Team domain から取得。
+    "TEAM_DOMAIN": "https://REPLACE_WITH_TEAM.cloudflareaccess.com",
+
+    // 認証に使う Access アプリの Application Audience (AUD) Tag。
+    // Cloudflare One -> Access controls -> Applications で、 Public hostnames の Path に PROTECTED_PATHS のいずれかを設定。
+    // Additional settings で AUD Tag を取得。
+    "POLICY_AUD": "REPLACE_WITH_AUD_TAG",
+
+    // 完全非公開パス (カンマ区切り)。"/" は完全一致 (ルート直下のみ)。
+    // それ以外はプレフィックス一致で、末尾スラッシュの有無は問わない。
+    // 例: "/private/" は "/private" と "/private/配下すべて" に一致する。
+    "PROTECTED_PATHS": "/,/private/"
   }
 }
