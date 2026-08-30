@@ -2,6 +2,18 @@ const CACHE_TTL_SECONDS = 604800;
 
 export default {
   async fetch(request, env) {
+    // Geo 制限: JP 以外は Cloudflare のブランド付き 500 エラーページを返す。
+    // /cdn-cgi/error/500 はエッジが直接配信する。Worker からの fetch は
+    // 自ホストへのサブリクエスト扱いでループ保護に引っかかるため、
+    // クライアントにリダイレクトさせてエッジのページを表示する。
+    // request.cf?.country は本番で必ず入る。不明 IP は "XX" 等としてここで弾かれる。
+    // undefined は wrangler dev 等のローカル実行時のみで、その場合は通す。
+    const country = request.cf?.country;
+    if (country && country !== "JP") {
+      const u = new URL(request.url);
+      return Response.redirect(`${u.origin}/cdn-cgi/error/500`, 302);
+    }
+
     const PRIVATE_BASE = env.PRIVATE_BASE; // wrangler.jsonc の vars から注入
     const url = new URL(request.url);
     const origin = await env.MESH.fetch(
