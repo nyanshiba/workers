@@ -1,0 +1,38 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "files",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-26",
+
+  // Workers Cache: エッジが Worker を実行せずにキャッシュ済み応答を返す。
+  // GET 200 応答のみ public, max-age=3600 でキャッシュされ、2 回目以降は
+  // cf-cache-status: HIT になる。書き込み時に ctx.cache.purge で即時無効化。
+  // 要 Wrangler 4.69.0 以上。
+  "cache": {
+    "enabled": true
+  },
+
+  // Workers VPC: アカウントの Cloudflare Mesh ネットワーク全体に束縛する。
+  // 宛先は実行時に env.ORIGIN_URL の URL で決まる (サービス事前登録は不要)。
+  // 前提: オリジンネットワークに Cloudflare Mesh ノード (旧 WARP Connector) が接続済み。
+  // https://developers.cloudflare.com/workers-vpc/configuration/vpc-networks/
+  "vpc_networks": [
+    {
+      "binding": "MESH",
+      "network_id": "cf1:network",
+      // wrangler dev で実ネットワークに届くようにする (deploy には影響しない)
+      "remote": true
+    }
+  ],
+
+  "vars": {
+    // オリジン (Dufs) の宛先。Mesh 経由で到達できるアドレスを指定 (末尾スラッシュなし)。
+    // 例: "http://192.168.1.10:5000"
+    "ORIGIN_URL": "http://10.64.12.50:5000",
+
+    // "true" にすると /__up 系 API は Cf-Access-Jwt-Assertion なしで拒否される。
+    // 公開 URL は https://files.example.workers.dev。Access の Self-hosted app
+    // 対象にこのホスト名を入れたあとに "true" へ。
+    "REQUIRE_ACCESS_JWT": "false"
+  }
+}
