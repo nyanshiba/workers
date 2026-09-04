@@ -1,0 +1,28 @@
+{
+  "name": "linkding-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for linkding bookmark manager, running on Cloudflare Workers with Access OAuth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "agents": "^0.17.1",
+    "jose": "^6.2.10",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "6.0.3",
+    "vitest": "^3.0.0",
+    "wrangler": "^4.105.0"
+  }
+}

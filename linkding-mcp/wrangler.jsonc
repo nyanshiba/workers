@@ -1,0 +1,27 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "linkding-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-04",
+	"vpc_networks": [
+		{
+			"binding": "MESH",
+			"network_id": "cf1:network",
+			"remote": true
+		}
+	],
+	"observability": {
+		"enabled": true
+	},
+	"dev": {
+		"port": 8788
+	},
+	"secrets": {
+		"required": [
+			"TEAM_DOMAIN",
+			"POLICY_AUD",
+			"LINKDING_API_TOKEN",
+			"LINKDING_BASE_URL"
+		]
+	}
+}

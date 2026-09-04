@@ -1,3 +1,5 @@
 .dev.vars
 secrets.json
+.prod.vars.json
 .wrangler/
+node_modules/

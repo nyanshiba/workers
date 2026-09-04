@@ -1,0 +1,4 @@
+TEAM_DOMAIN=<Zero Trust team name, e.g. myteam for myteam.cloudflareaccess.com>
+POLICY_AUD=<Application AUD tag from the Access app overview page>
+LINKDING_API_TOKEN=<linkding API token from Settings > Integrations>
+LINKDING_BASE_URL=http://linkding.internal:9090
