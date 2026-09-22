@@ -9,7 +9,7 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
-    "type-check": "tsc --noEmit",
+    "type-check": "wrangler types && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },

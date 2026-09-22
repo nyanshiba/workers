@@ -35,7 +35,10 @@ Cloudflare Access ── Cf-Access-Jwt-Assertion ──► Cloudflare Worker ─
 git clone <this-repo> linkding-mcp
 cd linkding-mcp
 bun install
+bun run cf-typegen
 ```
+
+`cf-typegen` は `wrangler.jsonc` から型定義 (`worker-configuration.d.ts`) を生成します。このファイルは生成物のためリポジトリに含めません。以降の `type-check` 実行時にも自動で再生成されます。
 
 ### 2. VPC ネットワーク (Cloudflare Mesh) の設定
 
@@ -183,9 +186,11 @@ linkding のブックマークを検索します。読み取り専用で、ブ�
 | `q`      | string  | 任意 | 検索クエリ。空白区切りで AND 結合。`#tag` でタグフィルタ。ダブルクォートでフレーズ検索。空文字で全件取得。 |
 | `tags`   | string  | 任意 | カンマ区切りタグ (AND)。`#tag1 #tag2` を `q` に追加するのと等価。    |
 | `limit`  | number  | 任意 | 最大件数 (1–1000, デフォルト 100)。                                  |
-| `offset` | number  | 任意 | ページネーションオフセット (デフォルト 0)。                          |
+| `offset` | number  | 任意 | ページネーションオフセット (デフォルト 0)。`added_before` 指定時は絞り込み後に適用。 |
+| `added_since` | string | 任意 | この日時より後に追加されたもののみ (ISO 8601、linkding の added_since)。不正形式は無視される。 |
+| `added_before` | string | 任意 | この日時より前に追加されたもののみ (ISO 8601、境界を含まない、MCP 側で適用)。上限 1000 件の候補から絞り込む。 |
 
-**戻り値:** JSON 文字列。`count` (総件数) と `results` (ブックマーク配列) を含む。各ブックマークは `url`, `title`, `description`, `tags`, `date_added` を持つ。
+**戻り値:** JSON 文字列。`count` (総件数。`added_before` 指定時は絞り込み後の総数) と `results` (ブックマーク配列) を含む。各ブックマークは `url`, `title`, `description`, `tags`, `date_added` を持つ。
 
 ## 制約と注意点
 

@@ -6,6 +6,8 @@ interface SearchArgs {
 	tags?: string;
 	limit?: number;
 	offset?: number;
+	added_since?: string;
+	added_before?: string;
 }
 
 /**
@@ -35,6 +37,17 @@ function clampLimit(limit: number | undefined): number {
 	if (limit === undefined) return 100;
 	if (!Number.isFinite(limit)) return 100;
 	return Math.min(1000, Math.max(1, Math.floor(limit)));
+}
+
+/**
+ * Parse an ISO 8601 datetime for `added_before`. Returns null when absent or
+ * unparseable (mirroring linkding, which silently ignores invalid
+ * added_since values instead of erroring).
+ */
+function parseDateOrNull(value: string | undefined): number | null {
+	if (!value || !value.trim()) return null;
+	const t = Date.parse(value.trim());
+	return Number.isNaN(t) ? null : t;
 }
 
 /**
@@ -85,11 +98,23 @@ export async function linkdingSearch(
 	const limit = clampLimit(args.limit);
 	const offset = Math.max(0, Math.floor(args.offset ?? 0));
 	const q = buildLinkdingQuery(args);
+	// linkding has lower-bound filters only (added_since / modified_since).
+	// added_before is applied worker-side on date_added (see toResult).
+	const before = parseDateOrNull(args.added_before);
 
 	const params = new URLSearchParams();
 	if (q) params.set("q", q);
-	params.set("limit", String(limit));
-	if (offset > 0) params.set("offset", String(offset));
+	if (args.added_since && args.added_since.trim()) {
+		params.set("added_since", args.added_since.trim());
+	}
+	if (before !== null) {
+		// The upper-bound filter needs the full candidate set: fetch up to
+		// the API cap and apply offset/limit after filtering.
+		params.set("limit", "1000");
+	} else {
+		params.set("limit", String(limit));
+		if (offset > 0) params.set("offset", String(offset));
+	}
 
 	// Any upstream/config/network failure becomes a model-readable tool error,
 	// never an unhandled transport 500 (which opaquely kills the tool call).
@@ -111,7 +136,7 @@ export async function linkdingSearch(
 		}
 
 		const raw = (await upstream.json()) as LinkdingRawResponse;
-		return toResult(raw, limit);
+		return toResult(raw, limit, before !== null ? offset : 0, before);
 	} catch (e) {
 		return {
 			content: [
@@ -125,9 +150,24 @@ export async function linkdingSearch(
 	}
 }
 
-function toResult(raw: LinkdingRawResponse, limit: number): MCPResult {
+function toResult(
+	raw: LinkdingRawResponse,
+	limit: number,
+	skip: number,
+	before: number | null,
+): MCPResult {
 	const results = Array.isArray(raw.results) ? (raw.results as LinkdingBookmark[]) : [];
-	const bookmarks = results.slice(0, limit).map((b) => ({
+	// Upper bound (exclusive `<`) on date_added. Records with an unparseable
+	// date are kept rather than silently dropped.
+	const filtered =
+		before !== null
+			? results.filter((b) => {
+					const t = Date.parse(b.date_added ?? "");
+					return Number.isNaN(t) || t < before;
+				})
+			: results;
+	const page = filtered.slice(skip, skip + limit);
+	const bookmarks = page.map((b) => ({
 		url: b.url ?? "",
 		title: b.title ?? "",
 		description: b.description ?? "",
@@ -135,7 +175,12 @@ function toResult(raw: LinkdingRawResponse, limit: number): MCPResult {
 		date_added: b.date_added ?? "",
 	}));
 
-	const total = typeof raw.count === "number" ? raw.count : bookmarks.length;
+	const total =
+		before !== null
+			? filtered.length
+			: typeof raw.count === "number"
+				? raw.count
+				: bookmarks.length;
 	const text = JSON.stringify({ count: total, results: bookmarks }, null, 2);
 
 	return { content: [{ type: "text", text }] };
@@ -181,7 +226,22 @@ export function createLinkdingServer(env: Env): McpServer {
 				.int()
 				.min(0)
 				.optional()
-				.describe("Pagination offset. Default 0."),
+				.describe("Pagination offset. Default 0. Ignored when added_before is set (offset applies after filtering instead)."),
+			added_since: z
+				.string()
+				.optional()
+				.describe(
+					"Only bookmarks added after this ISO 8601 datetime (exclusive, linkding added_since). " +
+						"Example: '2026-01-01T00:00:00+09:00'. Invalid formats are silently ignored by linkding.",
+				),
+			added_before: z
+				.string()
+				.optional()
+				.describe(
+					"Only bookmarks added before this ISO 8601 datetime (exclusive '<', applied by the MCP server on date_added). " +
+						"Example range for Jan 2026: added_since='2026-01-01T00:00:00+09:00', added_before='2026-02-01T00:00:00+09:00'. " +
+						"Unparseable values disable the filter.",
+				),
 		},
 		async (args) => linkdingSearch(env, args),
 	);
