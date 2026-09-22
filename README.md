@@ -21,6 +21,9 @@ slop注意。使用の際は必ず [Access](https://dash.cloudflare.com/one/) �
     - **linkding-mcp**  
     `/mcp`へのPOSTリクエストに応じて、originの [sissbruecker/linkding](https://github.com/sissbruecker/linkding) へHTTP接続。  
     正当なハーネスをAccessのOAuthに基づいて認可。
+    - **linkding**  
+    originの [sissbruecker/linkding](https://github.com/sissbruecker/linkding) へHTTP接続。  
+    キャッシュ動作はsatidentと同様。ただしHTMLで状態を更新する仕様のため、HTMLは`no-store`。
     - **files**  
     originの [sigoden/dufs](https://github.com/sigoden/dufs) へHTTP接続。  
     キャッシュ動作はgrafanaと同様。にFree Tierのアップロード100MB制限を突破する機能を追加。
