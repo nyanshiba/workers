@@ -11,12 +11,6 @@
   "vpc_networks": [
     { "binding": "MESH", "network_id": "cf1:network", "remote": true }
   ],
-  "workers_dev": false,
-  "preview_urls": false,
-  "routes": [
-    {
-      "pattern": "doh.nyanshiba.com",
-      "custom_domain": true
-    }
-  ]
+  "workers_dev": true,
+  "preview_urls": false
 }

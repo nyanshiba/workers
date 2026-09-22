@@ -44,11 +44,23 @@ export default {
   async fetch(request, env) {
     const PRIVATE_BASE = env.PRIVATE_BASE; // wrangler.jsonc の vars から注入
     const url = new URL(request.url);
-    if (url.pathname !== "/dns-query") {
-      // 404 応答をヒューリスティックキャッシュ(404→3min)させない
-      return new Response("Not Found", {
-        status: 404,
-        headers: { "Cache-Control": "no-store" },
+    // 基本は遮断。JP からの /dns-query だけ通す(デフォルトデニー)。
+    // 非 JP・非対象パス・country 不明はすべてブランド付き 500 ページへ誘導する。
+    // /cdn-cgi/error/500 はエッジが直接配信する。Worker からの fetch は
+    // 自ホストへのサブリクエスト扱いでループ保護に引っかかるため、
+    // クライアントにリダイレクトさせてエッジのページを表示する。
+    // 302 に no-store を付ける理由: キャッシュキーに国が含まれないため、
+    // 遮断応答をキャッシュすると同一 URL を求める JP の正規利用者に誤配信される。
+    // DoS 時の Worker 実行コストより誤配信の防止を優先する。
+    // 注意: country が undefined の wrangler dev 等も遮断される。
+    const country = request.cf?.country;
+    if (url.pathname !== "/dns-query" || country !== "JP") {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `${url.origin}/cdn-cgi/error/500`,
+          "Cache-Control": "no-store",
+        },
       });
     }
     if (request.method !== "GET") {
