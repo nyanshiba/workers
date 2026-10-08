@@ -96,11 +96,14 @@ bunx wrangler dev
 ## Web UI への CSS パッチ / UI patch (model name always visible)
 
 opencode の Web UI はメッセージヘッダー(agent 名 · モデル名 · 時刻)を hover 時しか
-表示しない。この Worker は **HTML 応答に CSS を1枚注入**して常時表示に変えるため、
+表示しない。この Worker は **HTML 応答に CSS を注入**して常時表示に変えるため、
 プロキシ経由のクライアント(モバイル含む)では追加設定が不要です。
+iOS 27 PWA の画面上端プログレッシブブラー抑止ダミー(`.ios-blur-fix`)も同時に注入します。
+origin が指定する `apple-mobile-web-app-status-bar-style: black-translucent` は半透明を強制してダミーを無効化するため、`default` に書き換えます。  
+[iOS 27 PWAで画面上端に表示されるブラーを消す方法 #CSS - Qiita](https://qiita.com/na-trium-144/items/0add98a80ca2391e3f17)
 
 - 注入対象: `content-type: text/html` の GET 応答のみ(SSE / JSON API は素通し)
-- 注入位置: `</head>` 直前(`</head>` が無ければ先頭)。marker 付きで冪等
+- 注入位置: `<style>` は `</head>` 直前(`</head>` が無ければ先頭)、ダミー `<div>` は `<body>` 直後。marker 付きで冪等
 - 対象セレクタ: `[data-slot="user-message-copy-wrapper"]` / `[data-slot="text-part-copy-wrapper"]`
   (upstream: `packages/session-ui/src/components/message-part.css`)
 - 効かなくなった場合: upstream 側で data-slot 名が変わったとき。セレクタ不一致だけで
